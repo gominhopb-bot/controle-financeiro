@@ -217,7 +217,7 @@
     <script type="module">
         // Importações do Firebase
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, collection, onSnapshot, addDoc, deleteDoc, updateDoc, writeBatch, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         document.addEventListener('DOMContentLoaded', () => {
@@ -274,22 +274,27 @@
             let currentLancamentos = [];
 
             // --- CONFIGURAÇÃO DO FIREBASE ---
-           const firebaseConfig = {
-             apiKey: "AIzaSyBvcxkMi4WLXMNObh8sekxQeXHgFm-9Q78",
-             authDomain: "controle-financeiro-59667.firebaseapp.com",
-             projectId: "controle-financeiro-59667",
-             storageBucket: "controle-financeiro-59667.firebasestorage.app",
-             messagingSenderId: "486342471199",
-             appId: "1:486342471199:web:ac231bde4b537780296f2a"
-           };
-
-            // O appId para o caminho do Firestore será retirado do projectId
-            const appId = firebaseConfig.projectId;
+            // COLE AQUI A CONFIGURAÇÃO DO SEU PROJETO FIREBASE
+            const firebaseConfig = {
+              // Substitua com as suas chaves reais
+              apiKey: "AIzaSyBvcxkMi4WLXMNObh8sekxQeXHgFm-9Q78",
+              authDomain: "controle-financeiro-59667.firebaseapp.com",
+              projectId: "controle-financeiro-59667",
+              storageBucket: "controle-financeiro-59667.firebasestorage.app",
+              messagingSenderId: "486342471199",
+              appId: "1:486342471199:web:ac231bde4b537780296f2a"
+            };
             
-            let db, auth;
+            let db, auth, appId;
             let lancamentosCollectionRef;
 
             try {
+                // VERIFICAÇÃO DAS CHAVES DO FIREBASE
+                if (!firebaseConfig.apiKey || firebaseConfig.apiKey.startsWith("AIza...")) {
+                    throw new Error("As chaves de configuração do Firebase não foram preenchidas. Por favor, cole as suas chaves reais no ficheiro index.html.");
+                }
+
+                appId = firebaseConfig.projectId; // Define o appId aqui
                 const app = initializeApp(firebaseConfig);
                 auth = getAuth(app);
                 db = getFirestore(app);
@@ -310,7 +315,7 @@
                 lancamentosCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'lancamentos');
             } catch (e) {
                 console.error("Erro ao inicializar o Firebase:", e);
-                showNotification("Não foi possível conectar ao banco de dados. Verifique as chaves de configuração.", "error");
+                showNotification(e.message, "error");
                 return;
             }
             
@@ -325,7 +330,7 @@
                         await signInAnonymously(auth);
                     } catch (error) {
                         console.error("Erro na autenticação:", error);
-                        showNotification("Falha na autenticação com o servidor.", "error");
+                        showNotification("Falha na autenticação com o servidor. Verifique se a API Key é válida.", "error");
                     }
                 }
             });
@@ -519,7 +524,7 @@
             };
 
 
-            // --- LÓGICA DE CARREGAR ARQUIVO (CSV, ODS, XLSX) ---
+            // --- LÓGICA DE CARREGAR ARQUIVO (CSV, ODS, XLSX) - CORRIGIDA ---
             const handleFileLoad = async () => {
                 const file = fileInput.files[0];
                 if (!file) {
@@ -527,12 +532,13 @@
                     return;
                 }
 
+                showNotification("A processar o ficheiro, por favor aguarde...", "info");
+
                 const reader = new FileReader();
                 reader.onload = async (event) => {
                     let novosLancamentos = [];
                     let invalidRowsCount = 0;
-                    let validRowsCount = 0;
-
+                    
                     try {
                         let rows = [];
                         const fileExtension = file.name.split('.').pop().toLowerCase();
@@ -551,24 +557,24 @@
                             throw new Error("Formato de arquivo não suportado.");
                         }
 
-                        if (rows.length === 0) throw new Error("O arquivo está vazio ou não contém dados válidos.");
+                        if (rows.length === 0) throw new Error("O arquivo está vazio.");
+                        
+                        let dataRows = rows;
+                        const headerRow = rows[0].map(h => String(h || '').toLowerCase().trim());
+                        
+                        if (['prestador', 'cnpj'].some(keyword => headerRow[0].includes(keyword))) {
+                            dataRows = rows.slice(1);
+                        }
 
-                        rows.forEach((columns, index) => {
-                            // Pula a primeira linha se parecer um cabeçalho
-                            if (index === 0) {
-                                const firstCellContent = String(columns[0] || '').toLowerCase().trim();
-                                if (['prestador', 'cnpj'].some(keyword => firstCellContent.includes(keyword))) {
-                                    return; // Pula a iteração do cabeçalho
-                                }
-                            }
+                        console.log(`A processar ${dataRows.length} linhas de dados.`);
 
-                            if (!Array.isArray(columns) || columns.length < 5) {
-                                invalidRowsCount++;
-                                return;
+                        dataRows.forEach((columns, rowIndex) => {
+                            if (!Array.isArray(columns) || columns.every(cell => String(cell || '').trim() === '')) {
+                                return; // Pula linhas completamente vazias
                             }
 
                             const prestador = String(columns[0] || '').trim();
-                            const apuracaoValue = columns[4]; // Corrigido: índice 4 para apuração
+                            const apuracaoValue = columns[4];
                             let formattedDate = null;
 
                             if (apuracaoValue instanceof Date && !isNaN(apuracaoValue)) {
@@ -576,7 +582,7 @@
                                 const m = String(apuracaoValue.getMonth() + 1).padStart(2, '0');
                                 const d = String(apuracaoValue.getDate()).padStart(2, '0');
                                 formattedDate = `${y}-${m}-${d}`;
-                            } else if (typeof apuracaoValue === 'string') {
+                            } else if (typeof apuracaoValue === 'string' && apuracaoValue.trim() !== '') {
                                 const dateParts = apuracaoValue.trim().split('/');
                                 if (dateParts.length === 3) {
                                     const day = parseInt(dateParts[0], 10);
@@ -589,6 +595,7 @@
                             }
 
                             if (!prestador || !formattedDate) {
+                                console.log(`Linha inválida #${rowIndex + 1}:`, columns);
                                 invalidRowsCount++;
                                 return;
                             }
@@ -602,9 +609,9 @@
                                 observacao: String(columns[5] || '').trim(),
                                 marked: false
                             });
-                            validRowsCount++;
                         });
 
+                        const validRowsCount = novosLancamentos.length;
                         if (validRowsCount > 0) {
                             const batch = writeBatch(db);
                             novosLancamentos.forEach(lancamento => {
@@ -619,7 +626,7 @@
                             }
                             showNotification(successMessage, "success");
                         } else {
-                            showNotification("Nenhum lançamento válido foi encontrado. Verifique se o arquivo tem um cabeçalho ou se os dados (especialmente Prestador e Apuração) estão corretos.", "error");
+                            showNotification("Nenhum lançamento válido foi encontrado. Verifique se os dados nas colunas 'Prestador' e 'Apuração' estão corretos.", "error");
                         }
                     } catch (error) {
                         showNotification(`Erro ao processar o arquivo: ${error.message}`, "error");
@@ -629,7 +636,7 @@
                     }
                 };
 
-                reader.onerror = () => showNotification("Erro crítico ao tentar ler o arquivo.", "error");
+                reader.onerror = () => showNotification("Erro crítico ao tentar ler o ficheiro.", "error");
                 
                 const fileExtension = file.name.split('.').pop().toLowerCase();
                 if (['ods', 'xlsx'].includes(fileExtension)) {
