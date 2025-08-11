@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="manifest" href="manifest.json">
+    <!-- <link rel="manifest" href="manifest.json"> --> <!-- Removido para corrigir erro do Service Worker -->
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -221,9 +221,29 @@
         import { getFirestore, doc, collection, onSnapshot, addDoc, deleteDoc, updateDoc, writeBatch, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         document.addEventListener('DOMContentLoaded', () => {
+            
+            const notificationArea = document.getElementById('notification-area');
+
+            // --- SISTEMA DE NOTIFICAÇÃO (MOVIDO PARA O TOPO) ---
+            const showNotification = (message, type = 'info') => {
+                const notification = document.createElement('div');
+                notification.className = `notification ${type}`;
+                notification.textContent = message;
+                notificationArea.appendChild(notification);
+
+                requestAnimationFrame(() => {
+                    notification.classList.add('show');
+                });
+
+                setTimeout(() => {
+                    notification.classList.remove('show');
+                    notification.addEventListener('transitionend', () => notification.remove());
+                }, 5000);
+            };
+
             // --- REGISTRO DO SERVICE WORKER PARA OFFLINE ---
             if ('serviceWorker' in navigator) {
-                navigator.serviceWorker.register('/sw.js')
+                navigator.serviceWorker.register('./sw.js') // Corrigido para caminho relativo
                     .then(registration => {
                         console.log('Service Worker registrado com sucesso:', registration);
                     })
@@ -243,7 +263,6 @@
             const exportButton = document.getElementById('export-button');
             const fileInput = document.getElementById('file-input');
             const loadFileButton = document.getElementById('load-file-button');
-            const notificationArea = document.getElementById('notification-area');
             const migrationBanner = document.getElementById('migration-banner');
             const migrateButton = document.getElementById('migrate-button');
             const dismissMigrationButton = document.getElementById('dismiss-migration-button');
@@ -255,14 +274,20 @@
             let currentLancamentos = [];
 
             // --- CONFIGURAÇÃO DO FIREBASE ---
+            // COLE AQUI A CONFIGURAÇÃO DO SEU PROJETO FIREBASE
             const firebaseConfig = {
-  apiKey: "AIzaSyBvcxkMi4WLXMNObh8sekxQeXHgFm-9Q78",
-  authDomain: "controle-financeiro-59667.firebaseapp.com",
-  projectId: "controle-financeiro-59667",
-  storageBucket: "controle-financeiro-59667.firebasestorage.app",
-  messagingSenderId: "486342471199",
-  appId: "1:486342471199:web:ac231bde4b537780296f2a"
-};
+              // Substitua com as suas chaves reais
+              apiKey: "AIza...",
+              authDomain: "seu-projeto.firebaseapp.com",
+              projectId: "seu-projeto",
+              storageBucket: "seu-projeto.appspot.com",
+              messagingSenderId: "12345",
+              appId: "1:12345:web:..."
+            };
+
+            // O appId para o caminho do Firestore será retirado do projectId
+            const appId = firebaseConfig.projectId;
+            
             let db, auth;
             let lancamentosCollectionRef;
 
@@ -287,7 +312,7 @@
                 lancamentosCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'lancamentos');
             } catch (e) {
                 console.error("Erro ao inicializar o Firebase:", e);
-                showNotification("Não foi possível conectar ao banco de dados.", "error");
+                showNotification("Não foi possível conectar ao banco de dados. Verifique as chaves de configuração.", "error");
                 return;
             }
             
@@ -298,34 +323,14 @@
                     checkForOldData(); 
                 } else {
                     try {
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await signInWithCustomToken(auth, __initial_auth_token);
-                        } else {
-                            await signInAnonymously(auth);
-                        }
+                        // Para o GitHub Pages, a autenticação anônima é a mais indicada
+                        await signInAnonymously(auth);
                     } catch (error) {
                         console.error("Erro na autenticação:", error);
                         showNotification("Falha na autenticação com o servidor.", "error");
                     }
                 }
             });
-
-            // --- SISTEMA DE NOTIFICAÇÃO ---
-            const showNotification = (message, type = 'info') => {
-                const notification = document.createElement('div');
-                notification.className = `notification ${type}`;
-                notification.textContent = message;
-                notificationArea.appendChild(notification);
-
-                requestAnimationFrame(() => {
-                    notification.classList.add('show');
-                });
-
-                setTimeout(() => {
-                    notification.classList.remove('show');
-                    notification.addEventListener('transitionend', () => notification.remove());
-                }, 5000);
-            };
 
             // --- FUNÇÕES DE FORMATAÇÃO ---
             const formatCnpj = (cnpj) => {
