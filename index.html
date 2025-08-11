@@ -284,6 +284,7 @@
               messagingSenderId: "486342471199",
               appId: "1:486342471199:web:ac231bde4b537780296f2a"
             };
+
             
             let db, auth, appId;
             let lancamentosCollectionRef;
@@ -351,12 +352,12 @@
                 input.value = (parseInt(value, 10) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
             };
 
-            // --- RENDERIZAÇÃO DA TABELA ---
+            // --- RENDERIZAÇÃO DA TABELA (CORRIGIDA) ---
             const renderTable = (lancamentos) => {
                 const emptyState = document.getElementById('empty-state');
                 tableBody.innerHTML = ''; 
 
-                if (lancamentos.length === 0) {
+                if (!lancamentos || lancamentos.length === 0) {
                     emptyState.style.display = 'block';
                     document.getElementById('relatorio-table').style.display = 'none';
                 } else {
@@ -364,28 +365,26 @@
                     document.getElementById('relatorio-table').style.display = 'table';
                 }
 
-                // Limpa o estado da seleção múltipla ao renderizar
                 selectAllCheckbox.checked = false;
                 deleteSelectedButton.classList.add('hidden');
 
                 lancamentos.forEach((lanc) => {
                     const row = document.createElement('tr');
                     
-                    let rowClasses = [];
-                    if (lanc.marked) { rowClasses.push('bg-green-100'); } 
+                    const rowClasses = (lanc.marked) ? ['bg-green-100'] : [];
                     row.className = rowClasses.join(' ');
                     
-                    const dateParts = lanc.apuracao.split('-');
-                    const formattedDate = dateParts.length === 3 ? `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}` : lanc.apuracao;
+                    const dateParts = (lanc.apuracao || '').split('-');
+                    const formattedDate = dateParts.length === 3 ? `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}` : '';
 
                     row.innerHTML = `
                         <td class="px-6 py-4 whitespace-nowrap">
                             <input type="checkbox" class="row-checkbox h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 no-print" data-id="${lanc.id}">
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.prestador}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.natureza_rendimento}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.base_calculo}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.valor_retido}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.prestador || ''}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.natureza_rendimento || ''}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.base_calculo || ''}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.valor_retido || ''}</td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${formattedDate}</td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.observacao || ''}</td>
                         <td class="no-print px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -411,6 +410,7 @@
                         return cnpjA.localeCompare(cnpjB);
                     });
                     
+                    console.log("Dados recebidos do Firestore para renderizar:", lancamentos); // Log para diagnóstico
                     currentLancamentos = lancamentos;
                     renderTable(lancamentos);
                 }, (error) => {
