@@ -280,18 +280,17 @@
               apiKey: "AIzaSyBvcxkMi4WLXMNObh8sekxQeXHgFm-9Q78",
               authDomain: "controle-financeiro-59667.firebaseapp.com",
               projectId: "controle-financeiro-59667",
-              storageBucket: "controle-financeiro-59667.firebasestorage.app",
+              storageBucket: "controle-financeiro-59667.appspot.com", // Corrigido para .appspot.com
               messagingSenderId: "486342471199",
               appId: "1:486342471199:web:ac231bde4b537780296f2a"
             };
-
             
             let db, auth, appId;
             let lancamentosCollectionRef;
 
             try {
                 // VERIFICAÇÃO DAS CHAVES DO FIREBASE
-                if (!firebaseConfig.apiKey || firebaseConfig.apiKey.startsWith("AIza...")) {
+                if (!firebaseConfig.apiKey || firebaseConfig.apiKey.includes("AIza...")) {
                     throw new Error("As chaves de configuração do Firebase não foram preenchidas. Por favor, cole as suas chaves reais no ficheiro index.html.");
                 }
 
@@ -323,6 +322,7 @@
             // --- AUTENTICAÇÃO E CARGA INICIAL ---
             onAuthStateChanged(auth, async (user) => {
                 if (user) {
+                    console.log("Utilizador autenticado:", user.uid);
                     listenForLancamentos();
                     checkForOldData(); 
                 } else {
@@ -398,7 +398,9 @@
             
             // --- LÓGICA DE DADOS (FIRESTORE) ---
             function listenForLancamentos() {
+                console.log("A configurar o 'listener' para o Firestore...");
                 onSnapshot(lancamentosCollectionRef, (snapshot) => {
+                    console.log(`Snapshot recebido! Encontrados ${snapshot.size} documentos.`);
                     const lancamentos = [];
                     snapshot.forEach((doc) => {
                         lancamentos.push({ id: doc.id, ...doc.data() });
@@ -410,7 +412,6 @@
                         return cnpjA.localeCompare(cnpjB);
                     });
                     
-                    console.log("Dados recebidos do Firestore para renderizar:", lancamentos); // Log para diagnóstico
                     currentLancamentos = lancamentos;
                     renderTable(lancamentos);
                 }, (error) => {
