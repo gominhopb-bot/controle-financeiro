@@ -255,9 +255,14 @@
             let currentLancamentos = [];
 
             // --- CONFIGURAÇÃO DO FIREBASE ---
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-            
+            const firebaseConfig = {
+  apiKey: "AIzaSyBvcxkMi4WLXMNObh8sekxQeXHgFm-9Q78",
+  authDomain: "controle-financeiro-59667.firebaseapp.com",
+  projectId: "controle-financeiro-59667",
+  storageBucket: "controle-financeiro-59667.firebasestorage.app",
+  messagingSenderId: "486342471199",
+  appId: "1:486342471199:web:ac231bde4b537780296f2a"
+};
             let db, auth;
             let lancamentosCollectionRef;
 
