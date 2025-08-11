@@ -3,461 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Controle de Lançamentos Financeiros (Online)</title>
+    <title>Controle de Lançamentos Financeiros (Online/Offline)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Biblioteca para ler e escrever arquivos de planilha (ODS, XLSX, etc) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <!-- Firebase SDKs -->
-    <script type="module">
-        // Importações do Firebase
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, collection, onSnapshot, addDoc, deleteDoc, updateDoc, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        document.addEventListener('DOMContentLoaded', () => {
-            // Seletores de Elementos
-            const form = document.getElementById('lancamento-form');
-            const prestadorInput = document.getElementById('prestador');
-            const currencyInputs = [
-                document.getElementById('base_calculo'),
-                document.getElementById('valor_retido')
-            ];
-            const exportButton = document.getElementById('export-button');
-            const fileInput = document.getElementById('file-input');
-            const loadFileButton = document.getElementById('load-file-button');
-            const notificationArea = document.getElementById('notification-area');
-            const migrationBanner = document.getElementById('migration-banner');
-            const migrateButton = document.getElementById('migrate-button');
-            const dismissMigrationButton = document.getElementById('dismiss-migration-button');
-            const shareButton = document.getElementById('share-button');
-            const selectAllCheckbox = document.getElementById('select-all-checkbox');
-            const deleteSelectedButton = document.getElementById('delete-selected-button');
-
-            // --- VARIÁVEL GLOBAL PARA DADOS ATUAIS ---
-            let currentLancamentos = [];
-
-            // --- CONFIGURAÇÃO DO FIREBASE ---
-           apiKey: "AIzaSyBvcxkMi4WLXMNObh8sekxQeXHgFm-9Q78",
-              authDomain: "controle-financeiro-59667.firebaseapp.com",
-              projectId: "controle-financeiro-59667",
-              storageBucket: "controle-financeiro-59667.firebasestorage.app",
-              messagingSenderId: "486342471199",
-              appId: "1:486342471199:web:ac231bde4b537780296f2a"
-            };
-
-            let db, auth;
-            let lancamentosCollectionRef;
-
-            try {
-                const app = initializeApp(firebaseConfig);
-                auth = getAuth(app);
-                db = getFirestore(app);
-                lancamentosCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'lancamentos');
-            } catch (e) {
-                console.error("Erro ao inicializar o Firebase:", e);
-                showNotification("Não foi possível conectar ao banco de dados.", "error");
-                return;
-            }
-            
-            // --- AUTENTICAÇÃO E CARGA INICIAL ---
-            onAuthStateChanged(auth, async (user) => {
-                if (user) {
-                    listenForLancamentos();
-                    checkForOldData(); 
-                } else {
-                    try {
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await signInWithCustomToken(auth, __initial_auth_token);
-                        } else {
-                            await signInAnonymously(auth);
-                        }
-                    } catch (error) {
-                        console.error("Erro na autenticação:", error);
-                        showNotification("Falha na autenticação com o servidor.", "error");
-                    }
-                }
-            });
-
-            // --- SISTEMA DE NOTIFICAÇÃO ---
-            const showNotification = (message, type = 'info') => {
-                const notification = document.createElement('div');
-                notification.className = `notification ${type}`;
-                notification.textContent = message;
-                notificationArea.appendChild(notification);
-
-                requestAnimationFrame(() => {
-                    notification.classList.add('show');
-                });
-
-                setTimeout(() => {
-                    notification.classList.remove('show');
-                    notification.addEventListener('transitionend', () => notification.remove());
-                }, 4000);
-            };
-
-            // --- FUNÇÕES DE FORMATAÇÃO ---
-            const formatCnpj = (cnpj) => {
-                let value = cnpj.replace(/\D/g, '').substring(0, 14);
-                if (value.length > 12) return value.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
-                if (value.length > 8) return value.replace(/^(\d{2})(\d{3})(\d{3})(\d{1,4})/, '$1.$2.$3/$4');
-                if (value.length > 5) return value.replace(/^(\d{2})(\d{3})(\d{1,3})/, '$1.$2.$3');
-                if (value.length > 2) return value.replace(/^(\d{2})(\d{1,3})/, '$1.$2');
-                return value;
-            };
-            
-            const formatCurrency = (input) => {
-                let value = input.value.replace(/\D/g, '');
-                if(value === '') { input.value = ''; return; }
-                input.value = (parseInt(value, 10) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-            };
-
-            // --- RENDERIZAÇÃO DA TABELA ---
-            const renderTable = (lancamentos) => {
-                const tableBody = document.getElementById('relatorio-body');
-                const emptyState = document.getElementById('empty-state');
-                
-                tableBody.innerHTML = ''; 
-
-                if (lancamentos.length === 0) {
-                    emptyState.style.display = 'block';
-                    document.getElementById('relatorio-table').style.display = 'none';
-                } else {
-                    emptyState.style.display = 'none';
-                    document.getElementById('relatorio-table').style.display = 'table';
-                }
-
-                lancamentos.forEach((lanc) => {
-                    const row = document.createElement('tr');
-                    
-                    let rowClasses = [];
-                    if (lanc.marked) { rowClasses.push('bg-green-100'); } 
-                    row.className = rowClasses.join(' ');
-                    
-                    const dateParts = lanc.apuracao.split('-');
-                    const formattedDate = dateParts.length === 3 ? `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}` : lanc.apuracao;
-
-                    row.innerHTML = `
-                        <td class="no-print px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            <input type="checkbox" class="row-checkbox form-checkbox h-4 w-4 text-indigo-600 rounded" data-id="${lanc.id}">
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.prestador}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.natureza_rendimento}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.base_calculo}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.valor_retido}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${formattedDate}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.observacao || ''}</td>
-                        <td class="no-print px-6 py-4 whitespace-nowrap text-sm font-medium">
-                            <button onclick="window.toggleMark('${lanc.id}', ${lanc.marked})" class="text-green-600 hover:text-green-900 mr-4">Marcar</button>
-                        </td>
-                    `;
-                    tableBody.appendChild(row);
-                });
-            };
-            
-            // --- LÓGICA DE DADOS (FIRESTORE) ---
-            function listenForLancamentos() {
-                onSnapshot(lancamentosCollectionRef, (snapshot) => {
-                    const lancamentos = [];
-                    snapshot.forEach((doc) => {
-                        lancamentos.push({ id: doc.id, ...doc.data() });
-                    });
-
-                    lancamentos.sort((a, b) => {
-                        const cnpjA = (a.prestador || '').replace(/\D/g, '');
-                        const cnpjB = (b.prestador || '').replace(/\D/g, '');
-                        return cnpjA.localeCompare(cnpjB);
-                    });
-                    
-                    currentLancamentos = lancamentos;
-                    renderTable(lancamentos);
-                }, (error) => {
-                    console.error("Erro ao ouvir os lançamentos:", error);
-                    showNotification("Erro de conexão com o relatório.", "error");
-                });
-            }
-
-            // --- MIGRAÇÃO de DADOS ANTIGOS ---
-            const checkForOldData = () => {
-                try {
-                    const oldDataString = localStorage.getItem('lancamentos');
-                    if (oldDataString) {
-                        const oldLancamentos = JSON.parse(oldDataString);
-                        if (Array.isArray(oldLancamentos) && oldLancamentos.length > 0) {
-                            migrationBanner.classList.remove('hidden');
-                        }
-                    }
-                } catch (e) {
-                    console.error("Erro ao verificar dados antigos:", e);
-                    localStorage.removeItem('lancamentos');
-                }
-            };
-
-            const migrateData = async () => {
-                const oldDataString = localStorage.getItem('lancamentos');
-                if (!oldDataString) return;
-
-                try {
-                    const oldLancamentos = JSON.parse(oldDataString);
-                    if (!Array.isArray(oldLancamentos) || oldLancamentos.length === 0) {
-                        localStorage.removeItem('lancamentos');
-                        migrationBanner.classList.add('hidden');
-                        return;
-                    }
-
-                    const batch = writeBatch(db);
-                    oldLancamentos.forEach(lancamento => {
-                        const newLancamento = {
-                            prestador: lancamento.prestador || '',
-                            natureza_rendimento: lancamento.natureza_rendimento || '',
-                            codigo_receita: lancamento.codigo_receita || '',
-                            base_calculo: lancamento.base_calculo || '',
-                            valor_retido: lancamento.valor_retido || '',
-                            apuracao: lancamento.apuracao || 'data-invalida',
-                            observacao: lancamento.observacao || '',
-                            marked: lancamento.marked || false
-                        };
-                        const docRef = doc(lancamentosCollectionRef);
-                        batch.set(docRef, newLancamento);
-                    });
-
-                    await batch.commit();
-                    showNotification(`${oldLancamentos.length} registro(s) antigos importados com sucesso!`, "success");
-                    localStorage.removeItem('lancamentos');
-                    migrationBanner.classList.add('hidden');
-                } catch (error) {
-                    console.error("Erro ao migrar dados:", error);
-                    showNotification("Ocorreu um erro ao importar os dados antigos.", "error");
-                }
-            };
-
-            // --- LÓGICA DE EXPORTAÇÃO PARA EXCEL (XLSX) ---
-            const exportToExcel = () => {
-                if (currentLancamentos.length === 0) {
-                    showNotification("Não há dados para exportar.", "info");
-                    return;
-                }
-
-                const headers = [
-                    "Prestador",
-                    "Natureza do Rendimento",
-                    "Base de Cálculo",
-                    "Valor Retido",
-                    "Apuração",
-                    "Observação"
-                ];
-
-                const dataForSheet = currentLancamentos.map(lanc => {
-                    const dateParts = lanc.apuracao.split('-');
-                    const formattedDate = dateParts.length === 3 ? `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}` : lanc.apuracao;
-                    return [
-                        lanc.prestador,
-                        lanc.natureza_rendimento,
-                        lanc.base_calculo,
-                        lanc.valor_retido,
-                        formattedDate,
-                        lanc.observacao
-                    ];
-                });
-
-                // Adiciona os cabeçalhos no início do array de dados
-                const worksheetData = [headers, ...dataForSheet];
-
-                // Cria a planilha a partir do array de dados
-                const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
-                const workbook = XLSX.utils.book_new();
-                XLSX.utils.book_append_sheet(workbook, worksheet, "Lançamentos");
-
-                // Gera o arquivo .xlsx e inicia o download
-                XLSX.writeFile(workbook, "relatorio_de_lancamentos.xlsx");
-
-                showNotification("Relatório exportado com sucesso!", "success");
-            };
-
-
-            // --- LÓGICA DE COMPARTILHAMENTO ---
-            const shareApp = () => {
-                const url = window.location.href;
-                const tempInput = document.createElement('input');
-                tempInput.style.position = 'absolute';
-                tempInput.style.left = '-9999px';
-                tempInput.value = url;
-                document.body.appendChild(tempInput);
-                tempInput.select();
-                tempInput.setSelectionRange(0, 99999);
-                try {
-                    document.execCommand('copy');
-                    showNotification("Link do aplicativo copiado! Cole para compartilhar.", "success");
-                } catch (err) {
-                    console.error('Falha ao copiar o link: ', err);
-                    showNotification("Não foi possível copiar o link.", "error");
-                }
-                document.body.removeChild(tempInput);
-            };
-
-
-            // --- LÓGICA DE CARREGAR ARQUIVO (CSV E ODS) ---
-            const handleFileLoad = async () => {
-                const file = fileInput.files[0];
-                if (!file) {
-                    showNotification("Por favor, selecione um arquivo.", "error");
-                    return;
-                }
-
-                const reader = new FileReader();
-                reader.onload = async (event) => {
-                    let novosLancamentos = [];
-                    try {
-                        let rows = [];
-                        if (file.name.endsWith('.ods')) {
-                            const data = new Uint8Array(event.target.result);
-                            const workbook = XLSX.read(data, {type: 'array'});
-                            const firstSheetName = workbook.SheetNames[0];
-                            const worksheet = workbook.Sheets[firstSheetName];
-                            rows = XLSX.utils.sheet_to_json(worksheet, {header: 1, defval: ""});
-                        } 
-                        else if (file.name.endsWith('.csv')) {
-                            const fileContent = event.target.result;
-                            const lines = fileContent.split('\n').filter(line => line.trim() !== '');
-                            rows = lines.map(line => line.split(','));
-                        } else {
-                            throw new Error("Formato de arquivo não suportado.");
-                        }
-
-                        if (rows.length === 0) throw new Error("O arquivo está vazio ou não contém dados válidos.");
-                        // A partir de agora, o arquivo não tem mais a coluna 'código da receita', então o número de colunas esperado é 6.
-                        rows.forEach((columns) => {
-                            const safeColumns = columns.map(col => String(col));
-                            // A coluna de código da receita foi removida, então o mínimo é 6 colunas para os outros campos.
-                            if (safeColumns.length < 6) return;
-                            
-                            const data = safeColumns[4] ? safeColumns[4].trim() : ''; // A coluna de apuração é agora a 5ª (índice 4)
-                            const dateParts = data.split('/');
-                            const formattedDate = dateParts.length === 3 ? `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}` : 'data-invalida';
-
-                            novosLancamentos.push({
-                                prestador: safeColumns[0] ? safeColumns[0].trim() : '',
-                                natureza_rendimento: safeColumns[1] ? safeColumns[1].trim() : '',
-                                base_calculo: safeColumns[2] ? safeColumns[2].trim() : '', // Era índice 3
-                                valor_retido: safeColumns[3] ? safeColumns[3].trim() : '', // Era índice 4
-                                apuracao: formattedDate,
-                                observacao: safeColumns[5] ? safeColumns[5].trim() : '', // Era índice 6
-                                marked: false
-                            });
-                        });
-
-                        if (novosLancamentos.length > 0) {
-                            const batch = writeBatch(db);
-                            novosLancamentos.forEach(lancamento => {
-                                const docRef = doc(lancamentosCollectionRef);
-                                batch.set(docRef, lancamento);
-                            });
-                            await batch.commit();
-                            showNotification(`${novosLancamentos.length} lançamento(s) carregado(s) com sucesso!`, "success");
-                        } else {
-                            showNotification("Nenhum lançamento válido foi encontrado no arquivo.", "info");
-                        }
-                    } catch (error) {
-                        showNotification(error.message, "error");
-                        console.error("Erro ao carregar arquivo:", error);
-                    } finally {
-                        fileInput.value = '';
-                    }
-                };
-
-                reader.onerror = () => showNotification("Erro crítico ao tentar ler o arquivo.", "error");
-                
-                if (file.name.endsWith('.ods')) {
-                    reader.readAsArrayBuffer(file);
-                } else if (file.name.endsWith('.csv')) {
-                    reader.readAsText(file, 'UTF-8');
-                } else {
-                     showNotification("Formato de arquivo inválido. Selecione .csv ou .ods", "error");
-                }
-            };
-
-            // --- MANIPULAÇÃO DO FORMULÁRIO MANUAL ---
-            form.addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const formData = new FormData(form);
-                // Excluir 'codigo_receita' do objeto de dados
-                const dataEntries = [...formData.entries()].filter(([key]) => key !== 'codigo_receita');
-                const novoLancamento = {
-                    ...Object.fromEntries(dataEntries),
-                    marked: false
-                };
-                
-                try {
-                    await addDoc(lancamentosCollectionRef, novoLancamento);
-                    form.reset();
-                    showNotification("Lançamento adicionado!", "success");
-                } catch (error) {
-                    console.error("Erro ao adicionar lançamento:", error);
-                    showNotification("Falha ao salvar lançamento.", "error");
-                }
-            });
-
-            // --- FUNÇÕES DE AÇÃO (GLOBAIS) ---
-            window.toggleMark = async (id, currentStatus) => {
-                try {
-                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'lancamentos', id), {
-                        marked: !currentStatus
-                    });
-                } catch (error) {
-                    console.error("Erro ao marcar:", error);
-                    showNotification("Falha ao marcar lançamento.", "error");
-                }
-            };
-
-            const deleteSelectedLancamentos = async () => {
-                const selectedCheckboxes = document.querySelectorAll('.row-checkbox:checked');
-                if (selectedCheckboxes.length === 0) {
-                    showNotification("Nenhuma linha selecionada para exclusão.", "info");
-                    return;
-                }
-
-                // O alerta do navegador foi removido para garantir o funcionamento na plataforma.
-                // A exclusão ocorrerá imediatamente ao clicar.
-
-                try {
-                    const batch = writeBatch(db);
-                    selectedCheckboxes.forEach(checkbox => {
-                        const id = checkbox.dataset.id;
-                        batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'lancamentos', id));
-                    });
-                    await batch.commit();
-                    showNotification(`${selectedCheckboxes.length} lançamento(s) excluído(s).`, "success");
-                    selectAllCheckbox.checked = false;
-                } catch (error) {
-                    console.error("Erro ao excluir lançamentos selecionados:", error);
-                    showNotification("Falha ao excluir os lançamentos selecionados.", "error");
-                }
-            };
-
-
-            // --- EVENT LISTENERS ---
-            prestadorInput.addEventListener('input', (e) => e.target.value = formatCnpj(e.target.value));
-            currencyInputs.forEach(input => input.addEventListener('input', () => formatCurrency(input)));
-            exportButton.addEventListener('click', exportToExcel);
-            loadFileButton.addEventListener('click', handleFileLoad);
-            migrateButton.addEventListener('click', migrateData);
-            dismissMigrationButton.addEventListener('click', () => {
-                localStorage.removeItem('lancamentos');
-                migrationBanner.classList.add('hidden');
-            });
-            shareButton.addEventListener('click', shareApp);
-
-            // Novos listeners para seleção e exclusão
-            selectAllCheckbox.addEventListener('change', (e) => {
-                document.querySelectorAll('.row-checkbox').forEach(checkbox => {
-                    checkbox.checked = e.target.checked;
-                });
-            });
-            deleteSelectedButton.addEventListener('click', deleteSelectedLancamentos);
-        });
-    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- <link rel="manifest" href="manifest.json"> --> <!-- Removido para corrigir erro do Service Worker -->
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -530,7 +83,7 @@
             <div class="flex items-center justify-between">
                 <div>
                     <h1 class="text-3xl font-bold text-gray-900">Controle de Lançamentos Financeiros</h1>
-                    <p class="text-gray-600 mt-1">Aplicativo colaborativo. As alterações são vistas por todos em tempo real.</p>
+                    <p class="text-gray-600 mt-1">Aplicativo colaborativo. As alterações são vistas por todos em tempo real e funciona offline.</p>
                 </div>
                 <button id="share-button" class="no-print bg-blue-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-150 ease-in-out flex items-center">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="mr-2" viewBox="0 0 16 16">
@@ -557,7 +110,7 @@
         <div class="bg-white p-6 rounded-lg shadow-md mb-8 no-print">
             <h2 class="text-2xl font-semibold mb-4">Carregar Dados de Arquivo</h2>
             <div class="flex items-center space-x-4">
-                <input type="file" id="file-input" accept=".csv,.ods" class="block w-full text-sm text-gray-500
+                <input type="file" id="file-input" accept=".csv,.ods,.xlsx" class="block w-full text-sm text-gray-500
                     file:mr-4 file:py-2 file:px-4
                     file:rounded-md file:border-0
                     file:text-sm file:font-semibold
@@ -568,14 +121,14 @@
                     Carregar Arquivo
                 </button>
             </div>
-             <p class="text-xs text-gray-500 mt-2">Selecione um arquivo CSV ou ODS (Planilha OpenDocument) para preencher o relatório.</p>
+             <p class="text-xs text-gray-500 mt-2">Selecione um arquivo CSV, ODS ou XLSX para preencher o relatório.</p>
         </div>
 
 
         <!-- Seção do Formulário -->
         <div class="bg-white p-6 rounded-lg shadow-md mb-8 no-print">
             <h2 class="text-2xl font-semibold mb-6">Novo Lançamento Manual</h2>
-            <form id="lancamento-form" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <form id="lancamento-form" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
                 
                 <!-- Prestador -->
                 <div>
@@ -586,7 +139,13 @@
                 <!-- Natureza do Rendimento -->
                 <div>
                     <label for="natureza_rendimento" class="block text-sm font-medium text-gray-700 mb-1">Natureza do Rendimento</label>
-                    <input type="text" id="natureza_rendimento" name="natureza_rendimento" maxlength="5" pattern="\d*" required class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
+                    <input type="number" id="natureza_rendimento" name="natureza_rendimento" required class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
+                </div>
+
+                <!-- Apuração -->
+                <div>
+                    <label for="apuracao" class="block text-sm font-medium text-gray-700 mb-1">Apuração</label>
+                    <input type="date" id="apuracao" name="apuracao" required class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
                 </div>
 
                 <!-- Base de Cálculo -->
@@ -601,20 +160,14 @@
                     <input type="text" id="valor_retido" name="valor_retido" placeholder="R$ 0,00" required class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
                 </div>
                 
-                <!-- Apuração -->
-                <div>
-                    <label for="apuracao" class="block text-sm font-medium text-gray-700 mb-1">Apuração</label>
-                    <input type="date" id="apuracao" name="apuracao" required class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
-                </div>
-
                 <!-- Observação -->
-                <div class="md:col-span-3">
+                <div class="sm:col-span-2 md:col-span-3">
                     <label for="observacao" class="block text-sm font-medium text-gray-700 mb-1">Observação</label>
                     <textarea id="observacao" name="observacao" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"></textarea>
                 </div>
 
                 <!-- Botão de Adicionar -->
-                <div class="md:col-span-3">
+                <div class="sm:col-span-2 md:col-span-3">
                     <button type="submit" class="w-full bg-indigo-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition duration-150 ease-in-out">
                         Adicionar Lançamento
                     </button>
@@ -624,14 +177,14 @@
 
         <!-- Seção do Relatório -->
         <div class="bg-white p-6 rounded-lg shadow-md">
-            <div class="flex flex-col sm:flex-row justify-between items-center mb-6 space-y-4 sm:space-y-0">
+            <div class="flex justify-between items-center mb-6">
                 <h2 class="text-2xl font-semibold">Relatório de Lançamentos</h2>
-                <div class="flex space-x-2">
-                    <button id="export-button" class="no-print bg-green-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition duration-150 ease-in-out">
-                        Exportar para Planilha
-                    </button>
-                    <button id="delete-selected-button" class="no-print bg-red-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition duration-150 ease-in-out">
+                <div class="flex items-center">
+                    <button id="delete-selected-button" class="hidden no-print bg-red-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition duration-150 ease-in-out mr-4">
                         Excluir Selecionados
+                    </button>
+                    <button id="export-button" class="no-print bg-gray-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 transition duration-150 ease-in-out">
+                        Exportar para Planilha
                     </button>
                 </div>
             </div>
@@ -639,8 +192,8 @@
                 <table id="relatorio-table" class="min-w-full divide-y divide-gray-200">
                     <thead class="bg-gray-50">
                         <tr>
-                            <th scope="col" class="no-print px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                <input type="checkbox" id="select-all-checkbox" class="form-checkbox h-4 w-4 text-indigo-600 rounded">
+                            <th scope="col" class="px-6 py-3 text-left">
+                                <input type="checkbox" id="select-all-checkbox" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 no-print">
                             </th>
                             <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Prestador</th>
                             <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nat. Rend.</th>
@@ -659,5 +212,551 @@
             </div>
         </div>
     </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        // Importações do Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, collection, onSnapshot, addDoc, deleteDoc, updateDoc, writeBatch, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        document.addEventListener('DOMContentLoaded', () => {
+            
+            const notificationArea = document.getElementById('notification-area');
+
+            // --- SISTEMA DE NOTIFICAÇÃO (MOVIDO PARA O TOPO) ---
+            const showNotification = (message, type = 'info') => {
+                const notification = document.createElement('div');
+                notification.className = `notification ${type}`;
+                notification.textContent = message;
+                notificationArea.appendChild(notification);
+
+                requestAnimationFrame(() => {
+                    notification.classList.add('show');
+                });
+
+                setTimeout(() => {
+                    notification.classList.remove('show');
+                    notification.addEventListener('transitionend', () => notification.remove());
+                }, 5000);
+            };
+
+            // --- REGISTRO DO SERVICE WORKER PARA OFFLINE ---
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('./sw.js') // Corrigido para caminho relativo
+                    .then(registration => {
+                        console.log('Service Worker registrado com sucesso:', registration);
+                    })
+                    .catch(error => {
+                        console.log('Falha ao registrar Service Worker:', error);
+                    });
+            }
+
+            // Seletores de Elementos
+            const form = document.getElementById('lancamento-form');
+            const tableBody = document.getElementById('relatorio-body');
+            const prestadorInput = document.getElementById('prestador');
+            const currencyInputs = [
+                document.getElementById('base_calculo'),
+                document.getElementById('valor_retido')
+            ];
+            const exportButton = document.getElementById('export-button');
+            const fileInput = document.getElementById('file-input');
+            const loadFileButton = document.getElementById('load-file-button');
+            const migrationBanner = document.getElementById('migration-banner');
+            const migrateButton = document.getElementById('migrate-button');
+            const dismissMigrationButton = document.getElementById('dismiss-migration-button');
+            const shareButton = document.getElementById('share-button');
+            const selectAllCheckbox = document.getElementById('select-all-checkbox');
+            const deleteSelectedButton = document.getElementById('delete-selected-button');
+
+            // --- VARIÁVEL GLOBAL PARA DADOS ATUAIS ---
+            let currentLancamentos = [];
+
+            // --- CONFIGURAÇÃO DO FIREBASE ---
+            // COLE AQUI A CONFIGURAÇÃO DO SEU PROJETO FIREBASE
+            const firebaseConfig = {
+              // Substitua com as suas chaves reais
+              apiKey: "AIzaSyBvcxkMi4WLXMNObh8sekxQeXHgFm-9Q78",
+              authDomain: "controle-financeiro-59667.firebaseapp.com",
+              projectId: "controle-financeiro-59667",
+              storageBucket: "controle-financeiro-59667.appspot.com", // Corrigido para .appspot.com
+              messagingSenderId: "486342471199",
+              appId: "1:486342471199:web:ac231bde4b537780296f2a"
+            };
+            
+            let db, auth, appId;
+            let lancamentosCollectionRef;
+
+            try {
+                // VERIFICAÇÃO DAS CHAVES DO FIREBASE
+                if (!firebaseConfig.apiKey || firebaseConfig.apiKey.includes("AIza...")) {
+                    throw new Error("As chaves de configuração do Firebase não foram preenchidas. Por favor, cole as suas chaves reais no ficheiro index.html.");
+                }
+
+                appId = firebaseConfig.projectId; // Define o appId aqui
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+                
+                // HABILITA A PERSISTÊNCIA OFFLINE
+                enableIndexedDbPersistence(db)
+                    .then(() => {
+                        console.log("Persistência offline do Firestore habilitada.");
+                    })
+                    .catch((err) => {
+                        if (err.code == 'failed-precondition') {
+                            console.warn("Múltiplas abas abertas, persistência offline pode não funcionar corretamente.");
+                        } else if (err.code == 'unimplemented') {
+                            console.error("O navegador atual não suporta persistência offline.");
+                        }
+                    });
+
+                lancamentosCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'lancamentos');
+            } catch (e) {
+                console.error("Erro ao inicializar o Firebase:", e);
+                showNotification(e.message, "error");
+                return;
+            }
+            
+            // --- AUTENTICAÇÃO E CARGA INICIAL ---
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    console.log("Utilizador autenticado:", user.uid);
+                    listenForLancamentos();
+                    checkForOldData(); 
+                } else {
+                    try {
+                        // Para o GitHub Pages, a autenticação anônima é a mais indicada
+                        await signInAnonymously(auth);
+                    } catch (error) {
+                        console.error("Erro na autenticação:", error);
+                        showNotification("Falha na autenticação com o servidor. Verifique se a API Key é válida.", "error");
+                    }
+                }
+            });
+
+            // --- FUNÇÕES DE FORMATAÇÃO ---
+            const formatCnpj = (cnpj) => {
+                let value = cnpj.replace(/\D/g, '').substring(0, 14);
+                if (value.length > 12) return value.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+                if (value.length > 8) return value.replace(/^(\d{2})(\d{3})(\d{3})(\d{1,4})/, '$1.$2.$3/$4');
+                if (value.length > 5) return value.replace(/^(\d{2})(\d{3})(\d{1,3})/, '$1.$2.$3');
+                if (value.length > 2) return value.replace(/^(\d{2})(\d{1,3})/, '$1.$2');
+                return value;
+            };
+            
+            const formatCurrency = (input) => {
+                let value = input.value.replace(/\D/g, '');
+                if(value === '') { input.value = ''; return; }
+                input.value = (parseInt(value, 10) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+            };
+
+            // --- RENDERIZAÇÃO DA TABELA (CORRIGIDA) ---
+            const renderTable = (lancamentos) => {
+                const emptyState = document.getElementById('empty-state');
+                tableBody.innerHTML = ''; 
+
+                if (!lancamentos || lancamentos.length === 0) {
+                    emptyState.style.display = 'block';
+                    document.getElementById('relatorio-table').style.display = 'none';
+                } else {
+                    emptyState.style.display = 'none';
+                    document.getElementById('relatorio-table').style.display = 'table';
+                }
+
+                selectAllCheckbox.checked = false;
+                deleteSelectedButton.classList.add('hidden');
+
+                lancamentos.forEach((lanc) => {
+                    const row = document.createElement('tr');
+                    
+                    const rowClasses = (lanc.marked) ? ['bg-green-100'] : [];
+                    row.className = rowClasses.join(' ');
+                    
+                    const dateParts = (lanc.apuracao || '').split('-');
+                    const formattedDate = dateParts.length === 3 ? `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}` : '';
+
+                    row.innerHTML = `
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <input type="checkbox" class="row-checkbox h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 no-print" data-id="${lanc.id}">
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.prestador || ''}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.natureza_rendimento || ''}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.base_calculo || ''}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.valor_retido || ''}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${formattedDate}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${lanc.observacao || ''}</td>
+                        <td class="no-print px-6 py-4 whitespace-nowrap text-sm font-medium">
+                            <button data-action="toggle" data-id="${lanc.id}" data-marked="${lanc.marked}" class="text-green-600 hover:text-green-900 mr-4">Marcar</button>
+                            <button data-action="delete" data-id="${lanc.id}" class="text-red-600 hover:text-red-900">Excluir</button>
+                        </td>
+                    `;
+                    tableBody.appendChild(row);
+                });
+            };
+            
+            // --- LÓGICA DE DADOS (FIRESTORE) ---
+            function listenForLancamentos() {
+                console.log("A configurar o 'listener' para o Firestore...");
+                onSnapshot(lancamentosCollectionRef, (snapshot) => {
+                    console.log(`Snapshot recebido! Encontrados ${snapshot.size} documentos.`);
+                    const lancamentos = [];
+                    snapshot.forEach((doc) => {
+                        lancamentos.push({ id: doc.id, ...doc.data() });
+                    });
+
+                    lancamentos.sort((a, b) => {
+                        const cnpjA = (a.prestador || '').replace(/\D/g, '');
+                        const cnpjB = (b.prestador || '').replace(/\D/g, '');
+                        return cnpjA.localeCompare(cnpjB);
+                    });
+                    
+                    currentLancamentos = lancamentos;
+                    renderTable(lancamentos);
+                }, (error) => {
+                    console.error("Erro ao ouvir os lançamentos:", error);
+                    showNotification("Erro de conexão com o relatório.", "error");
+                });
+            }
+
+            // --- MIGRAÇÃO DE DADOS ANTIGOS ---
+            const checkForOldData = () => {
+                try {
+                    const oldDataString = localStorage.getItem('lancamentos');
+                    if (oldDataString) {
+                        const oldLancamentos = JSON.parse(oldDataString);
+                        if (Array.isArray(oldLancamentos) && oldLancamentos.length > 0) {
+                            migrationBanner.classList.remove('hidden');
+                        }
+                    }
+                } catch (e) {
+                    console.error("Erro ao verificar dados antigos:", e);
+                    localStorage.removeItem('lancamentos');
+                }
+            };
+
+            const migrateData = async () => {
+                const oldDataString = localStorage.getItem('lancamentos');
+                if (!oldDataString) return;
+
+                try {
+                    const oldLancamentos = JSON.parse(oldDataString);
+                    if (!Array.isArray(oldLancamentos) || oldLancamentos.length === 0) {
+                        localStorage.removeItem('lancamentos');
+                        migrationBanner.classList.add('hidden');
+                        return;
+                    }
+
+                    const batch = writeBatch(db);
+                    oldLancamentos.forEach(lancamento => {
+                        const newLancamento = {
+                            prestador: lancamento.prestador || '',
+                            natureza_rendimento: lancamento.natureza_rendimento || '',
+                            base_calculo: lancamento.base_calculo || '',
+                            valor_retido: lancamento.valor_retido || '',
+                            apuracao: lancamento.apuracao || 'data-invalida',
+                            observacao: lancamento.observacao || '',
+                            marked: lancamento.marked || false
+                        };
+                        const docRef = doc(lancamentosCollectionRef);
+                        batch.set(docRef, newLancamento);
+                    });
+
+                    await batch.commit();
+                    showNotification(`${oldLancamentos.length} registro(s) antigos importados com sucesso!`, "success");
+                    localStorage.removeItem('lancamentos');
+                    migrationBanner.classList.add('hidden');
+                } catch (error) {
+                    console.error("Erro ao migrar dados:", error);
+                    showNotification("Ocorreu um erro ao importar os dados antigos.", "error");
+                }
+            };
+
+            // --- LÓGICA DE EXPORTAÇÃO PARA EXCEL (XLSX) ---
+            const exportToExcel = () => {
+                if (currentLancamentos.length === 0) {
+                    showNotification("Não há dados para exportar.", "info");
+                    return;
+                }
+
+                const headers = [
+                    "Prestador", "Natureza do Rendimento", "Base de Cálculo",
+                    "Valor Retido", "Apuração", "Observação"
+                ];
+
+                const dataForSheet = currentLancamentos.map(lanc => {
+                    const dateParts = lanc.apuracao.split('-');
+                    const formattedDate = dateParts.length === 3 ? `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}` : lanc.apuracao;
+                    return [
+                        lanc.prestador, lanc.natureza_rendimento,
+                        lanc.base_calculo, lanc.valor_retido, formattedDate, lanc.observacao
+                    ];
+                });
+
+                const worksheetData = [headers, ...dataForSheet];
+                const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, "Lançamentos");
+                XLSX.writeFile(workbook, "relatorio_de_lancamentos.xlsx");
+                showNotification("Relatório exportado com sucesso!", "success");
+            };
+
+
+            // --- LÓGICA DE COMPARTILHAMENTO - CORRIGIDA ---
+            const shareApp = () => {
+                const url = window.location.href;
+                const tempInput = document.createElement('textarea');
+                tempInput.value = url;
+                document.body.appendChild(tempInput);
+                tempInput.select();
+                try {
+                    const successful = document.execCommand('copy');
+                    if (successful) {
+                        showNotification("Link do aplicativo copiado!", "success");
+                    } else {
+                        showNotification("Não foi possível copiar o link.", "error");
+                    }
+                } catch (err) {
+                    showNotification("Não foi possível copiar o link.", "error");
+                    console.error('Falha ao copiar o link: ', err);
+                }
+                document.body.removeChild(tempInput);
+            };
+
+
+            // --- LÓGICA DE CARREGAR ARQUIVO (CSV, ODS, XLSX) - CORRIGIDA ---
+            const handleFileLoad = async () => {
+                const file = fileInput.files[0];
+                if (!file) {
+                    showNotification("Por favor, selecione um arquivo.", "error");
+                    return;
+                }
+
+                showNotification("A processar o ficheiro, por favor aguarde...", "info");
+
+                const reader = new FileReader();
+                reader.onload = async (event) => {
+                    let novosLancamentos = [];
+                    let invalidRowsCount = 0;
+                    
+                    try {
+                        let rows = [];
+                        const fileExtension = file.name.split('.').pop().toLowerCase();
+
+                        if (['ods', 'xlsx'].includes(fileExtension)) {
+                            const data = new Uint8Array(event.target.result);
+                            const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+                            const firstSheetName = workbook.SheetNames[0];
+                            const worksheet = workbook.Sheets[firstSheetName];
+                            rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+                        } else if (fileExtension === 'csv') {
+                            const fileContent = event.target.result;
+                            const lines = fileContent.split('\n').filter(line => line.trim() !== '');
+                            rows = lines.map(line => line.split(','));
+                        } else {
+                            throw new Error("Formato de arquivo não suportado.");
+                        }
+
+                        if (rows.length === 0) throw new Error("O arquivo está vazio.");
+                        
+                        let dataRows = rows;
+                        const headerRow = rows[0].map(h => String(h || '').toLowerCase().trim());
+                        
+                        if (['prestador', 'cnpj'].some(keyword => headerRow[0].includes(keyword))) {
+                            dataRows = rows.slice(1);
+                        }
+
+                        console.log(`A processar ${dataRows.length} linhas de dados.`);
+
+                        dataRows.forEach((columns, rowIndex) => {
+                            if (!Array.isArray(columns) || columns.every(cell => String(cell || '').trim() === '')) {
+                                return; // Pula linhas completamente vazias
+                            }
+
+                            const prestador = String(columns[0] || '').trim();
+                            const apuracaoValue = columns[4];
+                            let formattedDate = null;
+
+                            if (apuracaoValue instanceof Date && !isNaN(apuracaoValue)) {
+                                const y = apuracaoValue.getFullYear();
+                                const m = String(apuracaoValue.getMonth() + 1).padStart(2, '0');
+                                const d = String(apuracaoValue.getDate()).padStart(2, '0');
+                                formattedDate = `${y}-${m}-${d}`;
+                            } else if (typeof apuracaoValue === 'string' && apuracaoValue.trim() !== '') {
+                                const dateParts = apuracaoValue.trim().split('/');
+                                if (dateParts.length === 3) {
+                                    const day = parseInt(dateParts[0], 10);
+                                    const month = parseInt(dateParts[1], 10);
+                                    const year = parseInt(dateParts[2], 10);
+                                    if (day > 0 && day <= 31 && month > 0 && month <= 12 && year > 1900 && year < 2100) {
+                                        formattedDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                                    }
+                                }
+                            }
+
+                            if (!prestador || !formattedDate) {
+                                console.log(`Linha inválida #${rowIndex + 1}:`, columns);
+                                invalidRowsCount++;
+                                return;
+                            }
+
+                            novosLancamentos.push({
+                                prestador: prestador,
+                                natureza_rendimento: String(columns[1] || '').trim(),
+                                base_calculo: String(columns[2] || '').trim(),
+                                valor_retido: String(columns[3] || '').trim(),
+                                apuracao: formattedDate,
+                                observacao: String(columns[5] || '').trim(),
+                                marked: false
+                            });
+                        });
+
+                        const validRowsCount = novosLancamentos.length;
+                        if (validRowsCount > 0) {
+                            const batch = writeBatch(db);
+                            novosLancamentos.forEach(lancamento => {
+                                const docRef = doc(lancamentosCollectionRef);
+                                batch.set(docRef, lancamento);
+                            });
+                            await batch.commit();
+
+                            let successMessage = `${validRowsCount} lançamento(s) carregado(s) com sucesso!`;
+                            if (invalidRowsCount > 0) {
+                                successMessage += ` ${invalidRowsCount} linha(s) inválida(s) foram ignoradas.`;
+                            }
+                            showNotification(successMessage, "success");
+                        } else {
+                            showNotification("Nenhum lançamento válido foi encontrado. Verifique se os dados nas colunas 'Prestador' e 'Apuração' estão corretos.", "error");
+                        }
+                    } catch (error) {
+                        showNotification(`Erro ao processar o arquivo: ${error.message}`, "error");
+                        console.error("Erro ao carregar arquivo:", error);
+                    } finally {
+                        fileInput.value = '';
+                    }
+                };
+
+                reader.onerror = () => showNotification("Erro crítico ao tentar ler o ficheiro.", "error");
+                
+                const fileExtension = file.name.split('.').pop().toLowerCase();
+                if (['ods', 'xlsx'].includes(fileExtension)) {
+                    reader.readAsArrayBuffer(file);
+                } else if (fileExtension === 'csv') {
+                    reader.readAsText(file, 'UTF-8');
+                } else {
+                     showNotification("Formato de arquivo inválido. Selecione .csv, .ods ou .xlsx", "error");
+                }
+            };
+
+            // --- MANIPULAÇÃO DO FORMULÁRIO MANUAL ---
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const formData = new FormData(form);
+                const novoLancamento = {
+                    ...Object.fromEntries(formData.entries()),
+                    marked: false
+                };
+                
+                try {
+                    await addDoc(lancamentosCollectionRef, novoLancamento);
+                    form.reset();
+                    showNotification("Lançamento adicionado!", "success");
+                } catch (error) {
+                    console.error("Erro ao adicionar lançamento:", error);
+                    showNotification("Falha ao salvar lançamento.", "error");
+                }
+            });
+
+            // --- DELEGAÇÃO DE EVENTOS PARA AÇÕES NA TABELA ---
+            tableBody.addEventListener('click', async (e) => {
+                const target = e.target;
+                if (!target.dataset.action) return; // Sai se não for um botão de ação
+
+                const id = target.dataset.id;
+                if (!id) return;
+
+                if (target.dataset.action === 'delete') {
+                    try {
+                        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'lancamentos', id));
+                        showNotification("Lançamento excluído.", "info");
+                    } catch (error) {
+                        console.error("Erro ao excluir:", error);
+                        showNotification("Falha ao excluir lançamento.", "error");
+                    }
+                } else if (target.dataset.action === 'toggle') {
+                    const currentStatus = target.dataset.marked === 'true';
+                    try {
+                        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'lancamentos', id), {
+                            marked: !currentStatus
+                        });
+                    } catch (error) {
+                        console.error("Erro ao marcar:", error);
+                        showNotification("Falha ao marcar lançamento.", "error");
+                    }
+                }
+            });
+
+            // --- LÓGICA DE EXCLUSÃO EM MASSA ---
+            function updateDeleteButtonVisibility() {
+                const selectedCheckboxes = tableBody.querySelectorAll('.row-checkbox:checked');
+                if (selectedCheckboxes.length > 0) {
+                    deleteSelectedButton.classList.remove('hidden');
+                } else {
+                    deleteSelectedButton.classList.add('hidden');
+                }
+            }
+
+            tableBody.addEventListener('change', (e) => {
+                if (e.target.classList.contains('row-checkbox')) {
+                    updateDeleteButtonVisibility();
+                }
+            });
+
+            selectAllCheckbox.addEventListener('change', (e) => {
+                const isChecked = e.target.checked;
+                const rowCheckboxes = tableBody.querySelectorAll('.row-checkbox');
+                rowCheckboxes.forEach(checkbox => {
+                    checkbox.checked = isChecked;
+                });
+                updateDeleteButtonVisibility();
+            });
+
+            deleteSelectedButton.addEventListener('click', async () => {
+                const selectedCheckboxes = tableBody.querySelectorAll('.row-checkbox:checked');
+                const idsToDelete = Array.from(selectedCheckboxes).map(cb => cb.dataset.id);
+
+                if (idsToDelete.length === 0) {
+                    showNotification("Nenhum item selecionado para exclusão.", "info");
+                    return;
+                }
+
+                try {
+                    const batch = writeBatch(db);
+                    idsToDelete.forEach(id => {
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'lancamentos', id);
+                        batch.delete(docRef);
+                    });
+                    await batch.commit();
+                    showNotification(`${idsToDelete.length} lançamento(s) excluído(s) com sucesso.`, "success");
+                } catch (error) {
+                    console.error("Erro ao excluir lançamentos em lote:", error);
+                    showNotification("Ocorreu um erro ao excluir os lançamentos.", "error");
+                }
+            });
+
+            // --- EVENT LISTENERS GERAIS ---
+            prestadorInput.addEventListener('input', (e) => e.target.value = formatCnpj(e.target.value));
+            currencyInputs.forEach(input => input.addEventListener('input', () => formatCurrency(input)));
+            exportButton.addEventListener('click', exportToExcel);
+            loadFileButton.addEventListener('click', handleFileLoad);
+            migrateButton.addEventListener('click', migrateData);
+            dismissMigrationButton.addEventListener('click', () => {
+                localStorage.removeItem('lancamentos');
+                migrationBanner.classList.add('hidden');
+            });
+            shareButton.addEventListener('click', shareApp);
+        });
+    </script>
 </body>
 </html>
